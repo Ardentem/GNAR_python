@@ -1,5 +1,12 @@
 # Python Code for GNAR 
 
+Code files:
+- `estimator.py`: contains the GNAR estimator class for fitting the model and summarizing results
+- `simulator.py`: simulation functions to generate Y, Z, W
+- `main.ipynb`: generate data and conduct estimation
+
+There is a brief tutorial in `main.ipynb` to demonstrate how to use the functions in this package.
+
 ## 1. Grouped Network Vector Autoregression
 
 This Python code implements the Grouped Network Vector Autoregression (GNAR) model ([Zhu et al., 2025](https://www.sciencedirect.com/science/article/pii/S0304407623002804)).
@@ -25,7 +32,7 @@ Y_{it} = \sum_{j=1, j\neq i}^N \beta_{g_i g_j} w_{ij}(t) Y_{j,(t-1)} + \nu_{g_i}
 
 Under this new setting, the original K-means grouping method is no longer applicable, since both the network structure and covariates are time-varying. Therefore, the fixed effects cannot be eliminated simply by demeaning, and an improved K-means initialization is required:
 
-For more details, please refer to [Ardentem's Blog (in Chinese)](https://ardentemwang.com/2025/07/22/GNAR1/#more)
+For more details of the Time-Varying GNAR and the improved K-means initialization, please refer to [Ardentem's Blog (in Chinese)](https://ardentemwang.com/2025/07/22/GNAR1/#more)
 
 ## References:
 

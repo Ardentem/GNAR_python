@@ -1,7 +1,7 @@
 import numpy as np
 
 class GNAR_simulator:
-    def __init__(self, N = 100, T = 300, G = 5, seed = 42, network_time_varying = False, CV_time_varying = False, CV_len = 4, omit_eye = True, network_dummy = True):
+    def __init__(self, N = 100, T = 300, G = 5, seed = 42, network_time_varying = False, CV_time_varying = False, CV_len = 4, omit_eye = True, network_dummy = True,sigma = 0.005):
         """ Initialize the GNAR simulator with parameters  
         N = 100: Number of nodes.   
         T = 300: Number of time points    
@@ -12,6 +12,7 @@ class GNAR_simulator:
         CV_len = 4: Length of the CV vector   
         omit_eye = True: Whether to omit the diagonal elements of the network  
         network_dummy = True: Whether to use a dummy network (0 or 1)
+        sigma = 0.005: Standard deviation of the noise
         """
         np.random.seed(seed)
         self.N = N
@@ -22,6 +23,7 @@ class GNAR_simulator:
         self.CV_time_varying = CV_time_varying
         self.omit_eye = omit_eye
         self.network_dummy = network_dummy
+        self.sigma = sigma
     
     def generate_para(self, beta=None, v=None, gamma=None):
         """ Generate the parameters for the GNAR model  
@@ -64,7 +66,7 @@ class GNAR_simulator:
             self.CV = np.random.rand(self.N, self.p)
             self.CV = np.repeat(self.CV[:, :, np.newaxis], self.T, axis=2)
         # 生成一个独立分布的噪声矩阵，正态分布，sigma为0.005
-        self.eps = np.random.normal(0, 0.005, (self.N, self.T))
+        self.eps = np.random.normal(0, self.sigma, (self.N, self.T))
         if (beta is None) and (v is None):
             # 生成随机的G个动量系数，取值范围【0.2，0.9】
             self.v = np.random.uniform(0.2, 0.9, self.G)
