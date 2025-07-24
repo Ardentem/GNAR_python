@@ -18,6 +18,7 @@ where $w_{ij}=n_i^{-1} a_{ij}$, $n_i=\sum_{j=1}^N a_{ij}$ denotes the out-degree
 ## 2. Time-Varying GNAR
 This section additionally considers time variation.
 Specifically, we further assume that both the network structure and the covariates are time-varying, and the model becomes:
+
 $$\begin{equation}
 Y_{it} = \sum_{j=1, j\neq i}^N \beta_{g_i g_j} w_{ij}(t) Y_{j,(t-1)} + \nu_{g_i} Y_{i,(t-1)} + z_{it}^\top \zeta_{g_i} + \varepsilon_{it}
 \end{equation}$$
