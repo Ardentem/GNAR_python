@@ -1,6 +1,7 @@
 import numpy as np
 from sklearn.cluster import KMeans
 from tqdm import tqdm
+from scipy import stats
 
 class GNAR_estimator:
     def __init__(self, Y, CV, network, seed=42, G=8):
@@ -21,6 +22,7 @@ class GNAR_estimator:
         np.random.seed(seed)
         self.beta = None
         self.group = None
+        self.group0 = None # 初始分组
 
     def ridgeOLS(self, X, y):
         """ Ridge Ordinary Least Squares estimation """
@@ -119,15 +121,58 @@ class GNAR_estimator:
             Kres2 = KMeans(n_clusters=self.G, random_state=self.seed).fit(beta_net)
             self.group = Kres2.labels_
         return self.group
+    
+    def cul_OLS_result(self, Xg, yg, beta):
+        # 预测和残差
+        y_hat = Xg.T @ beta
+        residuals = yg - y_hat
+        # 计算稳健协方差矩阵（White标准误，Sandwich估计）
+        # S = sum_i (e_i^2 * x_i @ x_i.T)
+        S = np.zeros((Xg.shape[0], Xg.shape[0]))
+        for i in range(Xg.shape[1]):
+            xi = Xg[:, i][:, np.newaxis]  # (k, 1)
+            S += residuals[i]**2 * (xi @ xi.T)  # (k, k)
+        XGXG_inv = np.linalg.inv(Xg @ Xg.T)
+        robust_var = XGXG_inv @ S @ XGXG_inv  # (k, k)
+        # 标准误
+        robust_se = np.sqrt(np.diag(robust_var))
+        # t统计量
+        t_stats = beta.flatten() / robust_se
+        # p值（假设自由度 n - k）
+        df = Xg.shape[1] - Xg.shape[0]
+        p_values = 2 * (1 - stats.t.cdf(np.abs(t_stats), df))
+        yg = yg.flatten()
+        y_hat = y_hat.flatten()
+        # 总离差平方和（TSS）
+        TSS = np.sum((yg - np.mean(yg)) ** 2)
+        # 残差平方和（RSS）
+        RSS = np.sum((yg - y_hat) ** 2)
+        # 决定系数 R^2
+        R2 = 1 - RSS / TSS
+        n = yg.shape[0]
+        k = Xg.shape[0]
+        R2_adj = 1 - (1 - R2) * (n - 1) / (n - k)
+        # 返回结果
+        return robust_se, t_stats, p_values, R2, R2_adj, n
 
-    def cul_para_OLS(self):
+    def cul_para_OLS(self, final=False):
         """ Calculate the parameters using self.group
-        return:
-        beta_all: (G+p+1)*G matrix of coefficients
+        final: bool, whether to return the final parameters
+        If final is True, return:
+            beta_all: (G+p+1)*G matrix of coefficients
+            robust_se: (G+p+1)*G matrix of robust standard errors
+            t_stats: (G+p+1)*G matrix of t statistics
+            p_values: (G+p+1)*G matrix of p values
+        else return:
+            beta_all: (G+p+1)*G matrix of coefficients
         """
         X = np.zeros((self.N, self.G + self.p + 1, self.T - 1))
         Y = np.zeros((self.N, self.T - 1))
         beta_all = np.zeros((self.G + self.p + 1, self.G))
+        robust_se = np.zeros((self.G + self.p + 1, self.G))
+        t_stats = np.zeros((self.G + self.p + 1, self.G))
+        p_values = np.zeros((self.G + self.p + 1, self.G))
+        info = np.zeros((3, self.G)) # 用于存储每个组的R2, R2_adj, N_obs  
         for i in range(self.N):
             # 取Network 第i列
             X_i = np.zeros((self.G+self.p+1, self.T-1))
@@ -149,7 +194,20 @@ class GNAR_estimator:
             # 计算OLS系数
             beta = np.linalg.inv(Xg @ Xg.T) @ Xg @ yg
             beta_all[:, g] = beta
-        return beta_all
+            if final:
+                # 如果是最终结果，计算稳健标准误、t统计量和p值
+                robust_se_g, t_stats_g, p_values_g, R2_g, R2_adj_g, n_g = self.cul_OLS_result(Xg, yg, beta)
+                robust_se[:, g] = robust_se_g
+                t_stats[:, g] = t_stats_g
+                p_values[:, g] = p_values_g
+                info[0, g] = R2_g
+                info[1, g] = R2_adj_g
+                info[2, g] = n_g
+        if final:
+            # 返回最终结果
+            return beta_all, robust_se, t_stats, p_values, info
+        else:
+            return beta_all
 
     def loss_function(self, beta=None, group=None):
         """ Calculate the loss function based on the parameters beta
@@ -231,3 +289,55 @@ class GNAR_estimator:
                 print("Convergence reached")
                 break
         return self.group, self.beta
+    
+    class GNAR_result:
+        """ A class to store the results of the GNAR model
+        Attributes:
+            beta: (G+p+1)*G matrix of coefficients
+            robust_se: (G+p+1)*G matrix of robust standard errors
+            t_stats: (G+p+1)*G matrix of t statistics
+            p_values: (G+p+1)*G matrix of p values
+        """
+        def __init__(self, beta, robust_se, t_stats, p_values, group, group0, info, G, N, T, p):
+            self.beta = beta   # (G+p+1)*G matrix of coefficients
+            self.robust_se = robust_se # (G+p+1)*G matrix of robust standard errors
+            self.t_stats = t_stats # (G+p+1)*G matrix of t statistics
+            self.p_values = p_values # (G+p+1)*G matrix of p values
+            self.group = group # N vector of group labels
+            self.group0 = group0 # Initial group labels before clustering
+            self.info = info # 3*G matrix of R2, R2_adj, N_obs
+            self.G = G # Number of groups
+            self.N = N # Number of nodes
+            self.T = T # Number of time periods
+            self.p = p # Number of covariates
+        
+        def summary(self):
+            """ Print a summary of the GNAR model results """
+            print("\033[1;31mGNAR Model Results:\033[0m")
+            print(f"N of Groups: {self.G:<5}, Nodes: {self.N:<5}, Time Periods: {self.T:<5}, Covariates: {self.p:<5}")
+            for g in range(self.G):
+                print("=========================== Group {} =============================".format(g))
+                print(f"\033[1;34mNodes_n\033[0m: {np.where(self.group == g)[0].shape[0]:<5}, \033[1;34mObs_n\033[0m: {self.info[2, g]:<5.0f}, \033[1;34mR2\033[0m: {self.info[0, g]:<10.4f}, \033[1;34mR2_adj\033[0m: {self.info[1, g]:<10.4f}")
+                print(f"\033[1;32m{f'Var':<15}{f'Coef':<15}{f'Robust SE':<15}{f't-stat':<15}{f'p-value':<15}\033[0m")
+                for i in range(self.G):
+                    print(f"{f'beta_g{g}g{i}':<15}{self.beta[i, g]:<15.4f}{self.robust_se[i, g]:<15.4f}{self.t_stats[i, g]:<15.4f}{self.p_values[i, g]:<15.4f}")
+                print(f"{f'v_g{g}':<15}{self.beta[self.G, g]:<15.4f}{self.robust_se[self.G, g]:<15.4f}{self.t_stats[self.G, g]:<15.4f}{self.p_values[self.G, g]:<15.4f}")
+                for i in range(self.p):
+                    print(f"{f'gamma_g{g}_{i}':<15}{self.beta[self.G + i, g]:<15.4f}{self.robust_se[self.G + i, g]:<15.4f}{self.t_stats[self.G + i, g]:<15.4f}{self.p_values[self.G + i, g]:<15.4f}")
+
+
+
+    def fit(self, method='networkeffect', time_varying=False):
+        """ Fit the GNAR model
+        method: str, the method for k-means clustering, default is 'networkeffect', you can also use 'momentum' or 'fixedeffect', and 'complete' is a test method!!!
+        time_varying: bool, whether the model is time-varying, default is False
+        """
+        self.group0 = self.k_means_clustering(method=method, time_varying=time_varying)
+        self.update_all_para()
+        self.beta, robust_se, t_stats, p_values, info = self.cul_para_OLS(final=True)
+        res = self.GNAR_result(beta = self.beta, robust_se = robust_se, 
+                                t_stats = t_stats, p_values = p_values, 
+                                group = self.group, group0 = self.group0, 
+                                info = info, G = self.G, 
+                                N=self.N, T=self.T, p=self.p)
+        return res
