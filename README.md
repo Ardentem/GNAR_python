@@ -2,7 +2,7 @@
 
 ## 1. Grouped Network Vector Autoregression
 
-This Python code implements the Grouped Network Vector Autoregression (GNAR) model.
+This Python code implements the Grouped Network Vector Autoregression (GNAR) model ([Zhu et al., 2025](https://www.sciencedirect.com/science/article/pii/S0304407623002804)).
 
 Consider a network with $N$ nodes, indexed by $i=1,\ldots,N$, whose relationships are recorded by the adjacency matrix $A=(a_{ij})\in\{0,1\}^{N\times N}$, where $a_{ij}=1$ indicates that node $i$ follows node $j$, and $a_{ij}=0$ otherwise. By convention, $a_{ii}=0$. For each node $i$, a time series of a continuous variable $\{Y_{it}\}_{t=0}^T$ is observed, along with a set of node-specific covariates $z_i\in\mathbb{R}^p$. In particular, the first component of $z_i$ is always $1$, corresponding to the intercept term.
 
