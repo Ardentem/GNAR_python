@@ -1,7 +1,10 @@
 import numpy as np
 
 class GNAR_simulator:
-    def __init__(self, N = 100, T = 300, G = 5, seed = 42, network_time_varying = False, CV_time_varying = False, CV_len = 4, omit_eye = True, network_dummy = True,sigma = 0.005):
+    def __init__(self, N = 100, T = 300, G = 3, seed = 42, 
+                 network_time_varying = False, CV_time_varying = False, 
+                 CV_len = 4, omit_eye = True, network_dummy = True, 
+                 sigma = 0.05, autoregression = True):
         """ Initialize the GNAR simulator with parameters  
         N = 100: Number of nodes.   
         T = 300: Number of time points    
@@ -12,7 +15,8 @@ class GNAR_simulator:
         CV_len = 4: Length of the CV vector   
         omit_eye = True: Whether to omit the diagonal elements of the network  
         network_dummy = True: Whether to use a dummy network (0 or 1)
-        sigma = 0.005: Standard deviation of the noise
+        sigma = 0.05: Standard deviation of the noise
+        autoregression = True: Whether to use autoregression
         """
         np.random.seed(seed)
         self.N = N
@@ -24,17 +28,23 @@ class GNAR_simulator:
         self.omit_eye = omit_eye
         self.network_dummy = network_dummy
         self.sigma = sigma
-    
+        self.autoregression = autoregression
+        self.y0 = None
+        self.X = None
+
     def generate_para(self, beta=None, v=None, gamma=None):
         """ Generate the parameters for the GNAR model  
         return:  
-        beta: G*G的网络系数矩阵    
+        beta: G*G的网络系数矩阵   
         v: G个动量系数    
         gamma: G*p的CV系数矩阵   
         group: N个节点的分组，取值范围为0到G-1
         """
         # 随机生成初始数据 长度为N array
-        self.y0 = np.random.rand(self.N)
+        if self.autoregression:
+            self.y0 = np.random.rand(self.N)
+        else:
+            self.X = np.random.rand(self.N, self.T) * 0.1  # 如果不使用自回归
         # 如果网络时间变化，生成一个随机的网络连接矩阵
         if self.network_time_varying:
             self.network = np.random.rand(self.N, self.N, self.T)
@@ -112,20 +122,32 @@ class GNAR_simulator:
             self.network_coef[:, :, t] = self.network[:, :, t] * self.coef
         # 递推每一天的 Yt = v@Yt-1 + network_coef@Yt-1 + gamma@CV + eps，注意是矩阵乘法
         self.Y = np.zeros((self.N, self.T))
-        self.Y[:, 0] = self.y0
-        for t in range(1, self.T):
-            # 计算上一天的Yt-1
-            Y_prev = self.Y[:, t-1]
-            # 计算动量部分
-            momentum = self.v_coef * Y_prev
-            # 计算网络部分
-            network_part = self.network_coef[:, :, t-1] @ Y_prev
-            # 计算CV部分（先乘再求和）
-            CV_part = np.sum(self.gamma_coef * self.CV[:, :, t-1], axis=1)
-            # 计算噪声部分
-            noise = self.eps[:, t]
-            # 计算当天的Yt
-            self.Y[:, t] = momentum + network_part + CV_part + noise
-        return self.Y, self.CV, self.network
-
-            
+        if self.autoregression:
+            self.Y[:, 0] = self.y0
+            for t in range(1, self.T):
+                # 计算上一天的Yt-1
+                Y_prev = self.Y[:, t-1]
+                # 计算动量部分
+                momentum = self.v_coef * Y_prev
+                # 计算网络部分
+                network_part = self.network_coef[:, :, t-1] @ Y_prev
+                # 计算CV部分（先乘再求和）
+                CV_part = np.sum(self.gamma_coef * self.CV[:, :, t-1], axis=1)
+                # 计算噪声部分
+                noise = self.eps[:, t]
+                # 计算当天的Yt
+                self.Y[:, t] = momentum + network_part + CV_part + noise
+            return self.Y, self.CV, self.network
+        else:
+            for t in range(self.T):
+                # 计算动量部分
+                momentum = self.v_coef * self.X[:, t]
+                # 计算网络部分
+                network_part = self.network_coef[:, :, t] @ self.X[:, t]
+                # 计算CV部分（先乘再求和）
+                CV_part = np.sum(self.gamma_coef * self.CV[:, :, t], axis=1)
+                # 计算噪声部分
+                noise = self.eps[:, t]
+                # 计算当天的Yt
+                self.Y[:, t] = momentum + network_part + CV_part + noise
+            return self.Y, self.X, self.CV, self.network

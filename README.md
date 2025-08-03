@@ -1,5 +1,8 @@
 # Python Code for GNAR 
 
+> <font color='red'>**Warning!!**</font>  
+> The author is not a professional programmer, and the code is for self-study purposes only. Some methods may not conform to the settings in the original paper, nor have they undergone rigorous mathematical reasoning and proof. **The author does not guarantee the correctness or usability of the code**. Please use with caution.
+
 Code files:
 - `estimator.py`: contains the GNAR estimator class for fitting the model and summarizing results
 - `simulator.py`: simulation functions to generate Y, Z, W
@@ -32,7 +35,37 @@ Y_{it} = \sum_{j=1, j\neq i}^N \beta_{g_i g_j} w_{ij}(t) Y_{j,(t-1)} + \nu_{g_i}
 
 Under this new setting, the original K-means grouping method is no longer applicable, since both the network structure and covariates are time-varying. Therefore, the fixed effects cannot be eliminated simply by demeaning, and an improved K-means initialization is required:
 
-For more details of the Time-Varying GNAR and the improved K-means initialization, please refer to [Ardentem's Blog (in Chinese)](https://ardentemwang.com/2025/07/22/GNAR1/#more)
+For more details of the Time-Varying GNAR and the improved K-means initialization, please refer to [Ardentem's Blog (1) (in Chinese)](https://ardentemwang.com/2025/07/22/GNAR1/#more)
+
+## 3. Normal Regression with Grouped Network Effect
+
+In addition to the Autoregression Model, this code also implements a normal regression model with network effect(e.g., [Zacchia, 2020](https://academic.oup.com/restud/article-abstract/87/4/1989/5505452?login=false)). The model is formulated as:
+
+$$\begin{equation}
+Y_{it} = \sum_{j=1, j\neq i}^N \beta_{g_i g_j} w_{ij}(t) X_{j,t} + \nu_{g_i} Y_{i,t} + z_{it}^\top \zeta_{g_i} + \varepsilon_{it}
+\end{equation}$$
+
+The same estimation method is applied to this model, and the K-means initialization is also improved to accommodate the time-varying nature of the network and covariates.
+
+For more details, please refer to [Ardentem's Blog (2) (in Chinese)](https://ardentemwang.com/2025/08/03/GNAR2/#more)
+
+## 4. Use GIC to select the number of groups
+
+According to [Zhu et al.(2025)](https://www.sciencedirect.com/science/article/pii/S0304407623002804), the Group Information Criterion (GIC) can be used to select the number of groups in the GNAR model.
+
+$$
+\begin{equation}
+\mathbb{GIC}_{\lambda_{NT}}(G) = \log \left\{\mathbf{Q}\left(\widehat{\boldsymbol{\theta}}^{(G)}, \widehat{\boldsymbol{\beta}}^{(G)}, \widehat{\mathbf{G}}^{(G)}\right) \right\} + \lambda_{NT} G
+\end{equation}
+$$
+
+This package sets the tuning parameter $\lambda_{NT}$ as follows, recommended by [Zhu et al.(2025)](https://www.sciencedirect.com/science/article/pii/S0304407623002804)
+
+$$
+\begin{equation}
+\lambda_{NT} = \dfrac{N^{1/10}T^{-1/2}}{2\min\{10,n_{90}\}}
+\end{equation}
+$$
 
 ## References:
 
@@ -41,3 +74,5 @@ For more details of the Time-Varying GNAR and the improved K-means initializatio
 - Zhu, X., & Pan, R. (2020). [Grouped network vector autoregression](https://www.jstor.org/stable/26968936). Statistica Sinica, 30(3), 1437-1462.
 
 - Zhu, X., Xu, G., & Fan, J. (2025). [Simultaneous estimation and group identification for network vector autoregressive model with heterogeneous nodes](https://www.sciencedirect.com/science/article/pii/S0304407623002804). Journal of Econometrics, 249, 105564.
+
+- Zacchia, P. (2020). [Knowledge spillovers through networks of scientists](https://academic.oup.com/restud/article-abstract/87/4/1989/5505452?login=false). The Review of economic studies, 87(4), 1989-2018.

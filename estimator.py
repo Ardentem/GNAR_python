@@ -4,15 +4,18 @@ from tqdm import tqdm
 from scipy import stats
 
 class GNAR_estimator:
-    def __init__(self, Y, CV, network, seed=42, G=8):
-        """ Initialize the GNAR estimator with parameters   
-        Y: N*T matrix of observations   
-        CV: N*p matrix of covariates   
-        network: N*N*T matrix of network connections      
-        seed: Random seed for reproducibility   
+    def __init__(self, Y, CV, network, seed=42, G=5, X=None):
+        """ Initialize the GNAR estimator with parameters
+        Y: N*T matrix of observations
+        CV: N*p matrix of covariates
+        network: N*N*T matrix of network connections
+        seed: Random seed for reproducibility
         G: Number of groups     
+        N: Number of nodes
+        X: N*T matrix of variables (if autoregression is not used)
         """
         self.Y = Y
+        self.X = X
         self.CV = CV
         self.network = network
         self.N, self.T = Y.shape
@@ -50,38 +53,69 @@ class GNAR_estimator:
         else:
             gamma: N*p matrix of CV coefficients
         """
-        if not time_varying:
-            # 删去第0天并对每个个体去均值
-            Y_tire = self.Y[:, 1:] - np.mean(self.Y[:, 1:], axis=1, keepdims=True)
-            # 删去最后一天并对每个个体去均值
-            Y_tire_lag = self.Y[:, :-1] - np.mean(self.Y[:, :-1], axis=1, keepdims=True)
-            # 初始化beta N+1* N
-            beta = np.zeros((self.N + 1, self.N))
-            fi = np.zeros(self.N)
-            for i in range(self.N):
-                Y_tire_lag_i = Y_tire_lag[i, :].reshape(1, -1) # 1*T-1
-                Y_tire_i = Y_tire[i, :] # 1*T-1
-                # 取Network
-                WY_tire_lag_i = self.network[i, :, :-1] * Y_tire_lag   # N*T-1
-                # 拼接
-                X = np.concatenate([WY_tire_lag_i,Y_tire_lag_i], axis=0) # N+1*T-1
-                # 计算beta
-                beta[:, i] = self.ridgeOLS(X, Y_tire_i)  # T-1*1
-                # 计算所有时间的网络均值
-                net_mean = np.mean(self.network[i, :, :-1], axis=1)  # N*1
-                fi[i] = np.mean(self.Y[i,1:]) - np.sum(beta[:-1, i] * net_mean * np.mean(self.Y[:, :-1], axis=1))- beta[-1, i] * np.mean(self.Y[i, :-1])
-            return beta[:-1,:],beta[-1,:], fi
+        if self.X is None:
+            if not time_varying:
+                # 删去第0天并对每个个体去均值
+                Y_tire = self.Y[:, 1:] - np.mean(self.Y[:, 1:], axis=1, keepdims=True)
+                # 删去最后一天并对每个个体去均值
+                Y_tire_lag = self.Y[:, :-1] - np.mean(self.Y[:, :-1], axis=1, keepdims=True)
+                # 初始化beta N+1* N
+                beta = np.zeros((self.N + 1, self.N))
+                fi = np.zeros(self.N)
+                for i in range(self.N):
+                    Y_tire_lag_i = Y_tire_lag[i, :].reshape(1, -1) # 1*T-1
+                    Y_tire_i = Y_tire[i, :] # 1*T-1
+                    # 取Network
+                    WY_tire_lag_i = self.network[i, :, :-1] * Y_tire_lag   # N*T-1
+                    # 拼接
+                    X = np.concatenate([WY_tire_lag_i,Y_tire_lag_i], axis=0) # N+1*T-1
+                    # 计算beta
+                    beta[:, i] = self.ridgeOLS(X, Y_tire_i)  # T-1*1
+                    # 计算所有时间的网络均值
+                    net_mean = np.mean(self.network[i, :, :-1], axis=1)  # N*1
+                    fi[i] = np.mean(self.Y[i,1:]) - np.sum(beta[:-1, i] * net_mean * np.mean(self.Y[:, :-1], axis=1))- beta[-1, i] * np.mean(self.Y[i, :-1])
+                return beta[:-1,:],beta[-1,:], fi
+            else:
+                # 初始化beta N+1+p* N*T
+                beta = np.zeros((self.N + 1 + self.p, self.N))
+                for i in range(self.N):
+                    Y_lag = self.Y[:, :-1]
+                    WY_lag_i = self.network[i, :, :-1] * Y_lag
+                    Y_lag_i = Y_lag[i, :].reshape(1, -1)
+                    X = np.concatenate([WY_lag_i, Y_lag_i, self.CV[i, :, :-1]], axis=0)
+                    beta[:, i] = self.ridgeOLS(X, self.Y[i, 1:])  # T-1*1
+                return beta[:self.N,:],beta[self.N,:], beta[self.N+1:,:]
         else:
-            # 初始化beta N+1+p* N*T
-            beta = np.zeros((self.N + 1 + self.p, self.N))
-            for i in range(self.N):
-                # 取Network
-                Y_lag = self.Y[:, :-1]
-                WY_lag_i = self.network[i, :, :-1] * Y_lag
-                Y_lag_i = Y_lag[i, :].reshape(1, -1)
-                X = np.concatenate([WY_lag_i, Y_lag_i, self.CV[i, :, :-1]], axis=0)
-                beta[:, i] = self.ridgeOLS(X, self.Y[i, 1:])  # T-1*1
-            return beta[:self.N,:],beta[self.N,:], beta[self.N+1:,:]
+            # 如果使用自回归，则X为N*T矩阵
+            if not time_varying:
+                # 去均值
+                X_tire = self.X - np.mean(self.X, axis=1, keepdims=True)
+                # 初始化beta N+1* N
+                beta = np.zeros((self.N + 1, self.N))
+                fi = np.zeros(self.N)
+                for i in range(self.N):
+                    X_tire_i = X_tire[i, :].reshape(1, -1)
+                    # 取Network
+                    WX_tire_i = self.network[i, :, :] * X_tire  # N*T
+                    # 拼接
+                    X = np.concatenate([WX_tire_i, X_tire_i], axis=0)  # N+1*T
+                    # 计算beta
+                    beta[:, i] = self.ridgeOLS(X, self.Y[i, :])
+                    # 计算所有时间的网络均值
+                    net_mean = np.mean(self.network[i, :, :], axis=1)  # N*1
+                    fi[i] = np.mean(self.Y[i, :]) - np.sum(beta[:-1, i] * net_mean * np.mean(self.Y, axis=1)) - beta[-1, i] * np.mean(self.Y[i, :])
+                return beta[:-1,:], beta[-1,:], fi
+            else:
+                # 初始化beta N+1+p* N*T
+                beta = np.zeros((self.N + 1 + self.p, self.N))
+                for i in range(self.N):
+                    X_i = self.X[i, :].reshape(1, -1)
+                    WX_i = self.network[i, :, :] * self.X  # N*T
+                    X = np.concatenate([WX_i, X_i, self.CV[i, :, :]], axis=0)
+                    beta[:, i] = self.ridgeOLS(X, self.Y[i, :])
+                return beta[:self.N,:], beta[self.N,:], beta[self.N+1:,:]
+
+
 
     def k_means_clustering(self, method='networkeffect', time_varying=False):
         """ Perform k-means clustering based on the specified method
@@ -166,24 +200,43 @@ class GNAR_estimator:
         else return:
             beta_all: (G+p+1)*G matrix of coefficients
         """
-        X = np.zeros((self.N, self.G + self.p + 1, self.T - 1))
-        Y = np.zeros((self.N, self.T - 1))
+        if self.X is None:
+            X = np.zeros((self.N, self.G + self.p + 1, self.T - 1))
+            Y = np.zeros((self.N, self.T - 1))
+        else:
+            X = np.zeros((self.N, self.G + self.p + 1, self.T))
+            Y = np.zeros((self.N, self.T))
         beta_all = np.zeros((self.G + self.p + 1, self.G))
         robust_se = np.zeros((self.G + self.p + 1, self.G))
         t_stats = np.zeros((self.G + self.p + 1, self.G))
         p_values = np.zeros((self.G + self.p + 1, self.G))
-        info = np.zeros((3, self.G)) # 用于存储每个组的R2, R2_adj, N_obs  
-        for i in range(self.N):
-            # 取Network 第i列
-            X_i = np.zeros((self.G+self.p+1, self.T-1))
-            Y_i = self.Y[i, 1:]
-            for g in range(self.G):
-                WY = self.network[i, :, :-1] * self.Y[:, :-1] * np.repeat((self.group == g).reshape(-1, 1), self.T-1, axis=1)  # N*T-1
-                X_i[g, :] = np.sum(WY, axis=0)
-            X_i[self.G, :] = self.Y[i, :-1]
-            X_i[self.G+1:self.G+self.p+1, :] = self.CV[i, :, :-1]
-            X[i, :, :] = X_i
-            Y[i, :] = Y_i
+        info = np.zeros((3, self.G)) # 用于存储每个组的R2, R2_adj, N_obs
+        if self.X is None:  
+            # 如果不使用自回归
+            for i in range(self.N):
+                # 取Network 第i列
+                X_i = np.zeros((self.G+self.p+1, self.T-1))
+                Y_i = self.Y[i, 1:]
+                for g in range(self.G):
+                    WY = self.network[i, :, :-1] * self.Y[:, :-1] * np.repeat((self.group == g).reshape(-1, 1), self.T-1, axis=1)  # N*T-1
+                    X_i[g, :] = np.sum(WY, axis=0)
+                X_i[self.G, :] = self.Y[i, :-1]
+                X_i[self.G+1:self.G+self.p+1, :] = self.CV[i, :, :-1]
+                X[i, :, :] = X_i
+                Y[i, :] = Y_i
+        else:
+            # 如果使用自回归
+            for i in range(self.N):
+                # 取Network 第i列
+                X_i = np.zeros((self.G+self.p+1, self.T))
+                Y_i = self.Y[i, :]
+                for g in range(self.G):
+                    WX = self.network[i, :, :] * self.X[:, :] * np.repeat((self.group == g).reshape(-1, 1), self.T, axis=1)  # N*T
+                    X_i[g, :] = np.sum(WX, axis=0)
+                X_i[self.G, :] = self.X[i, :]
+                X_i[self.G+1:self.G+self.p+1, :] = self.CV[i, :, :]
+                X[i, :, :] = X_i
+                Y[i, :] = Y_i
         for g in range(self.G):
             if np.sum(self.group == g) == 0:
                 # 初始化系数的时候不会出现某个组为0的情况
@@ -238,22 +291,37 @@ class GNAR_estimator:
         for t in range(self.T):
             self.network_coef[:, :, t] = self.network[:, :, t] * self.coef
         #计算每一天的 Yt = v@Yt-1 + network_coef@Yt-1 + gamma@CV + eps，注意是矩阵乘法
-        Y_est = np.zeros((self.N, self.T-1))
-        for t in range(1, self.T):
-            # 计算上一天的Yt-1
-            Y_prev = self.Y[:, t-1]
-            # 计算动量部分
-            momentum = self.v_coef * Y_prev
-            # 计算网络部分
-            network_part = self.network_coef[:, :, t-1] @ Y_prev
-            # 计算CV部分（先乘再求和）
-            CV_part = np.sum(self.gamma_coef * self.CV[:, :, t-1], axis=1)
-            # 计算当天的Yt
-            Y_est[:, t-1] = momentum + network_part + CV_part
-        loss = np.sum((Y_est - self.Y[:, 1:]) ** 2) / (self.N * (self.T-1))
+        if self.X is None:
+            # 如果使用自回归
+            Y_est = np.zeros((self.N, self.T-1))
+            for t in range(1, self.T):
+                # 计算上一天的Yt-1
+                Y_prev = self.Y[:, t-1]
+                # 计算动量部分
+                momentum = self.v_coef * Y_prev
+                # 计算网络部分
+                network_part = self.network_coef[:, :, t-1] @ Y_prev
+                # 计算CV部分（先乘再求和）
+                CV_part = np.sum(self.gamma_coef * self.CV[:, :, t-1], axis=1)
+                # 计算当天的Yt
+                Y_est[:, t-1] = momentum + network_part + CV_part
+            loss = np.sum((Y_est - self.Y[:, 1:]) ** 2) / (self.N * (self.T-1))
+        else:
+            # 如果不使用自回归
+            Y_est = np.zeros((self.N, self.T))
+            for t in range(self.T):
+                # 计算动量部分
+                momentum = self.v_coef * self.X[:, t]
+                # 计算网络部分
+                network_part = self.network_coef[:, :, t] @ self.X[:, t]
+                # 计算CV部分（先乘再求和）
+                CV_part = np.sum(self.gamma_coef * self.CV[:, :, t], axis=1)
+                # 计算当天的Yt
+                Y_est[:, t] = momentum + network_part + CV_part
+            loss = np.sum((Y_est - self.Y) ** 2) / (self.N * self.T)
         return loss
 
-    def update_para_group(self):
+    def update_para_group(self,leave=True):
         """ Update the group labels based on the loss function
         return:
         update_count: int, the number of nodes whose group labels are updated
@@ -263,7 +331,7 @@ class GNAR_estimator:
             raise ValueError("Group is not initialized, Run k_means_clustering() first")
         # update beta
         self.beta = self.cul_para_OLS()
-        for i in tqdm(range(self.N)):
+        for i in tqdm(range(self.N), leave=leave):
             i_group_loss = []
             for g in range(self.G):
                 group = self.group.copy()
@@ -275,18 +343,18 @@ class GNAR_estimator:
                 update_count += 1
                 self.group[i] = np.argmin(i_group_loss)
         return update_count
-    
-    def update_all_para(self, max_iter=100):
+
+    def update_all_para(self, max_iter=100, leave=True):
         """ Update all parameters until convergence or max_iter reached
         return:
         group: N vector of group labels
         beta: (G+p+1)*G matrix of coefficients
         """
         for epoch in range(max_iter):
-            update_count = self.update_para_group()
-            print(f"Epoch {epoch}: {update_count} nodes updated")
+            update_count = self.update_para_group(leave=leave)
+            if leave:
+                print(f"Epoch {epoch}: {update_count} nodes updated")
             if update_count == 0:
-                print("Convergence reached")
                 break
         return self.group, self.beta
     
@@ -297,6 +365,8 @@ class GNAR_estimator:
             robust_se: (G+p+1)*G matrix of robust standard errors
             t_stats: (G+p+1)*G matrix of t statistics
             p_values: (G+p+1)*G matrix of p values
+            group: N vector of group labels
+            info: 3*G matrix of R2, R2_adj, N_obs
         """
         def __init__(self, beta, robust_se, t_stats, p_values, group, group0, info, G, N, T, p):
             self.beta = beta   # (G+p+1)*G matrix of coefficients
@@ -327,17 +397,77 @@ class GNAR_estimator:
 
 
 
-    def fit(self, method='networkeffect', time_varying=False):
+    def fit(self, method='networkeffect', max_iter=100, time_varying=False, leave=True):
         """ Fit the GNAR model
         method: str, the method for k-means clustering, default is 'networkeffect', you can also use 'momentum' or 'fixedeffect', and 'complete' is a test method!!!
         time_varying: bool, whether the model is time-varying, default is False
+        max_iter: int, the maximum number of iterations for updating parameters, default is 100
         """
         self.group0 = self.k_means_clustering(method=method, time_varying=time_varying)
-        self.update_all_para()
+        self.update_all_para(max_iter=max_iter, leave=leave)
         self.beta, robust_se, t_stats, p_values, info = self.cul_para_OLS(final=True)
-        res = self.GNAR_result(beta = self.beta, robust_se = robust_se, 
-                                t_stats = t_stats, p_values = p_values, 
-                                group = self.group, group0 = self.group0, 
-                                info = info, G = self.G, 
+        res = self.GNAR_result(beta=self.beta, robust_se=robust_se,
+                                t_stats=t_stats, p_values=p_values,
+                                group=self.group, group0=self.group0,
+                                info=info, G=self.G,
                                 N=self.N, T=self.T, p=self.p)
         return res
+
+    class GNAR_GIC_result:
+        """ A class to store the GIC results of the GNAR model
+        Attributes:
+            G_list: list of G values tested
+            GIC: dictionary of GIC values for each G
+            res: dictionary of GNAR_result objects for each G
+            loss: dictionary of loss values for each G
+            best_G: the best G value with the minimum GIC
+            best_GIC: the minimum GIC value
+        """
+        def __init__(self):
+            self.G_list = []
+            self.GIC = {}
+            self.res = {}
+            self.loss = {}
+            self.best_G = None
+            self.best_GIC = None
+        
+        def summary(self):
+            """ Print a summary of the GIC results """
+            print(f"\033[1;31m GIC: best G = {self.best_G}\033[0m")
+            self.res[self.best_G].summary()
+
+        def plot(self,figsize=(10, 6), dpi=100):
+            """ Plot the GIC values for each G """
+            import matplotlib.pyplot as plt
+            plt.figure(figsize=figsize, dpi=dpi)
+            plt.plot(self.G_list, list(self.GIC.values()), marker='o')
+            plt.xlabel('Number of Groups (G)')
+            plt.ylabel('GIC Value')
+            plt.title('GIC Values for Different Number of Groups')
+            plt.grid()
+            plt.show()
+
+    def fit_GIC(self,method='networkeffect',max_G=8,max_iter=100,time_varying=False):
+        GIC_res = self.GNAR_GIC_result()
+        GIC_res.G_list = list(range(1, max_G + 1))
+        for G in GIC_res.G_list:
+            self.G = G
+            res = self.fit(method=method, max_iter=max_iter, 
+                           time_varying=time_varying, leave=False)
+            # 计算每个G的loss
+            loss = self.loss_function()
+            out_degree = np.sum(self.network, axis=0)  # 每个节点的出度
+            n_90 = np.percentile(out_degree, 90)  # 90%分位数
+            lambda_NT = ((self.N**0.1) * (self.T**(-0.5))) / (2*min(n_90,10))
+            GIC = np.log(loss) + lambda_NT*G
+            GIC_res.GIC[G] = GIC
+            GIC_res.res[G] = res
+            GIC_res.loss[G] = loss
+            print(f"G={G}, GIC={GIC:.4f}, loss={loss:.4f}, lambda_NT={lambda_NT:.4f}")
+        # 找到最小的GIC
+        GIC_res.best_G = min(GIC_res.GIC, key=GIC_res.GIC.get)
+        GIC_res.best_GIC = GIC_res.GIC[GIC_res.best_G]
+        self.G = GIC_res.best_G
+        print(f"Best G={GIC_res.best_G}, GIC={GIC_res.best_GIC:.4f}, back to G={self.G}")
+        return GIC_res
+
