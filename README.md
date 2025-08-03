@@ -53,11 +53,9 @@ For more details, please refer to [Ardentem's Blog (2) (in Chinese)](https://ard
 
 According to [Zhu et al.(2025)](https://www.sciencedirect.com/science/article/pii/S0304407623002804), the Group Information Criterion (GIC) can be used to select the number of groups in the GNAR model.
 
-$$
-\begin{equation}
+$$\begin{equation}
 \mathbb{GIC}_{\lambda_{NT}}(G) = \log \left\{\mathbf{Q}\left(\widehat{\boldsymbol{\theta}}^{(G)}, \widehat{\boldsymbol{\beta}}^{(G)}, \widehat{\mathbf{G}}^{(G)}\right) \right\} + \lambda_{NT} G
-\end{equation}
-$$
+\end{equation}$$
 
 This package sets the tuning parameter $\lambda_{NT}$ as follows, recommended by [Zhu et al.(2025)](https://www.sciencedirect.com/science/article/pii/S0304407623002804)
 
