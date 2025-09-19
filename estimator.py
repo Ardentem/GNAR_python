@@ -26,9 +26,10 @@ class GNAR_estimator:
         self.beta = None
         self.group = None
         self.group0 = None # 初始分组
-
+    
     def ridgeOLS(self, X, y):
-        """ Ridge Ordinary Least Squares estimation """
+        """ Ridge Ordinary Least Squares estimation (vectorized & faster) """
+        '''
         # 增加ridge tuning parameter
         XTX = X @ X.T
         # 计算lambda值并添加到对角线
@@ -40,6 +41,15 @@ class GNAR_estimator:
         # 在XTX对角线上加入lambda值
         XTX += np.diag(lambda_values)
         beta = np.linalg.inv(XTX) @ X @ y
+        '''
+        XTX = X @ X.T
+        # 计算每一行的平方和并生成 lambda 向量（向量化）
+        x_norm_sq = np.sum(X**2, axis=1)
+        lambda_values = 0.01 * x_norm_sq / (X.shape[1] + 1) + 1e-6
+        # 在 XTX 对角线上加入 lambda
+        XTX += np.diag(lambda_values)
+        # 使用 np.linalg.solve 替代 inv，提高速度和稳定性
+        beta = np.linalg.solve(XTX, X @ y)
         return beta
 
     def initialize_base_OLS(self,time_varying=False):
@@ -62,6 +72,21 @@ class GNAR_estimator:
                 # 初始化beta N+1* N
                 beta = np.zeros((self.N + 1, self.N))
                 fi = np.zeros(self.N)
+                Y_mean_all = np.mean(self.Y[:, :-1], axis=1)  # N*T-1 均值
+                Y_i_mean_all = np.mean(self.Y, axis=1)  # N*1
+                for i in range(self.N):
+                    # 构造 X
+                    WY_tire_lag_i = self.network[i, :, :-1] * Y_tire_lag  # N*T-1
+                    X = np.vstack([WY_tire_lag_i, Y_tire_lag[i, :].reshape(1, -1)])  # (N+1)*T-1
+                    # 计算 beta
+                    beta[:, i] = self.ridgeOLS(X, Y_tire[i, :])
+                    # 网络均值
+                    net_mean = np.mean(self.network[i, :, :-1], axis=1)  # N*1
+                    # 计算 fi[i]，向量化内部乘法
+                    fi[i] = (Y_i_mean_all[i, 1:] if Y_i_mean_all.ndim>1 else Y_i_mean_all[i]) \
+                            - (beta[:-1, i] * net_mean * Y_mean_all).sum() \
+                            - beta[-1, i] * np.mean(self.Y[i, :-1])
+                '''
                 for i in range(self.N):
                     Y_tire_lag_i = Y_tire_lag[i, :].reshape(1, -1) # 1*T-1
                     Y_tire_i = Y_tire[i, :] # 1*T-1
@@ -74,16 +99,33 @@ class GNAR_estimator:
                     # 计算所有时间的网络均值
                     net_mean = np.mean(self.network[i, :, :-1], axis=1)  # N*1
                     fi[i] = np.mean(self.Y[i,1:]) - np.sum(beta[:-1, i] * net_mean * np.mean(self.Y[:, :-1], axis=1))- beta[-1, i] * np.mean(self.Y[i, :-1])
+                '''
                 return beta[:-1,:],beta[-1,:], fi
             else:
                 # 初始化beta N+1+p* N*T
                 beta = np.zeros((self.N + 1 + self.p, self.N))
+                # 预处理Y_lag，去掉最后一列
+                Y_lag = self.Y[:, :-1]  # shape (N, T-1)
+                # 处理每个节点
+                for i in range(self.N):
+                    # WY_lag_i
+                    WY_lag_i = self.network[i, :, :-1] * Y_lag  # shape (N, T-1)
+                    # Y_lag_i
+                    Y_lag_i = Y_lag[i, :].reshape(1, -1)        # shape (1, T-1)
+                    # CV
+                    CV_i = self.CV[i, :, :-1]                   # shape (p, T-1)
+                    # 使用 np.vstack 替代 np.concatenate
+                    X = np.vstack([WY_lag_i, Y_lag_i, CV_i])   # shape (N+1+p, T-1)
+                    # 调用ridgeOLS
+                    beta[:, i] = self.ridgeOLS(X, self.Y[i, 1:])
+                '''
                 for i in range(self.N):
                     Y_lag = self.Y[:, :-1]
                     WY_lag_i = self.network[i, :, :-1] * Y_lag
                     Y_lag_i = Y_lag[i, :].reshape(1, -1)
                     X = np.concatenate([WY_lag_i, Y_lag_i, self.CV[i, :, :-1]], axis=0)
                     beta[:, i] = self.ridgeOLS(X, self.Y[i, 1:])  # T-1*1
+                '''
                 return beta[:self.N,:],beta[self.N,:], beta[self.N+1:,:]
         else:
             # 如果使用自回归，则X为N*T矩阵
@@ -93,6 +135,21 @@ class GNAR_estimator:
                 # 初始化beta N+1* N
                 beta = np.zeros((self.N + 1, self.N))
                 fi = np.zeros(self.N)
+                # 预计算Y的均值
+                Y_mean = np.mean(self.Y, axis=1)
+                for i in range(self.N):
+                    X_tire_i = X_tire[i:i+1, :]  # 直接切片，不用reshape
+                    # 取Network并乘以X_tire
+                    WX_tire_i = self.network[i, :, :] * X_tire  # N*T
+                    # 拼接
+                    X = np.vstack([WX_tire_i, X_tire_i])  # N+1*T
+                    # 计算beta
+                    beta[:, i] = self.ridgeOLS(X, self.Y[i, :])
+                    # 网络均值
+                    net_mean = np.mean(self.network[i, :, :], axis=1)  # N
+                    # 计算fi
+                    fi[i] = Y_mean[i] - np.sum(beta[:-1, i] * net_mean * Y_mean) - beta[-1, i] * Y_mean[i]
+                '''
                 for i in range(self.N):
                     X_tire_i = X_tire[i, :].reshape(1, -1)
                     # 取Network
@@ -104,8 +161,25 @@ class GNAR_estimator:
                     # 计算所有时间的网络均值
                     net_mean = np.mean(self.network[i, :, :], axis=1)  # N*1
                     fi[i] = np.mean(self.Y[i, :]) - np.sum(beta[:-1, i] * net_mean * np.mean(self.Y, axis=1)) - beta[-1, i] * np.mean(self.Y[i, :])
+                '''
                 return beta[:-1,:], beta[-1,:], fi
             else:
+                beta = np.zeros((self.N + 1 + self.p, self.N))
+                # 预处理X，避免循环里重复reshape
+                X_all = self.X
+                CV_all = self.CV
+                for i in range(self.N):
+                    # X_i直接切片，不用reshape
+                    X_i = X_all[i:i+1, :]  # shape 1*T
+                    # WX_i
+                    WX_i = self.network[i, :, :] * X_all  # N*T
+                    # CV_i
+                    CV_i = CV_all[i, :, :]  # p*T
+                    # 用vstack替代concatenate
+                    X = np.vstack([WX_i, X_i, CV_i])  # (N+1+p)*T
+                    # 计算beta
+                    beta[:, i] = self.ridgeOLS(X, self.Y[i, :])
+                '''
                 # 初始化beta N+1+p* N*T
                 beta = np.zeros((self.N + 1 + self.p, self.N))
                 for i in range(self.N):
@@ -113,9 +187,8 @@ class GNAR_estimator:
                     WX_i = self.network[i, :, :] * self.X  # N*T
                     X = np.concatenate([WX_i, X_i, self.CV[i, :, :]], axis=0)
                     beta[:, i] = self.ridgeOLS(X, self.Y[i, :])
+                '''
                 return beta[:self.N,:], beta[self.N,:], beta[self.N+1:,:]
-
-
 
     def k_means_clustering(self, method='networkeffect', time_varying=False):
         """ Perform k-means clustering based on the specified method
@@ -162,10 +235,16 @@ class GNAR_estimator:
         residuals = yg - y_hat
         # 计算稳健协方差矩阵（White标准误，Sandwich估计）
         # S = sum_i (e_i^2 * x_i @ x_i.T)
+        '''
         S = np.zeros((Xg.shape[0], Xg.shape[0]))
         for i in range(Xg.shape[1]):
             xi = Xg[:, i][:, np.newaxis]  # (k, 1)
             S += residuals[i]**2 * (xi @ xi.T)  # (k, k)
+        '''
+        R = residuals**2  # shape (n,)
+        X_weighted = Xg * R[np.newaxis, :]  # shape (k, n)
+        # 矩阵乘法
+        S = X_weighted @ Xg.T  # shape (k, k)
         XGXG_inv = np.linalg.inv(Xg @ Xg.T)
         robust_var = XGXG_inv @ S @ XGXG_inv  # (k, k)
         # 标准误
@@ -212,7 +291,8 @@ class GNAR_estimator:
         p_values = np.zeros((self.G + self.p + 1, self.G))
         info = np.zeros((3, self.G)) # 用于存储每个组的R2, R2_adj, N_obs
         if self.X is None:  
-            # 如果不使用自回归
+            # 如果使用自回归
+            '''
             for i in range(self.N):
                 # 取Network 第i列
                 X_i = np.zeros((self.G+self.p+1, self.T-1))
@@ -224,8 +304,22 @@ class GNAR_estimator:
                 X_i[self.G+1:self.G+self.p+1, :] = self.CV[i, :, :-1]
                 X[i, :, :] = X_i
                 Y[i, :] = Y_i
+            '''
+            X = np.zeros((self.N, self.G + self.p + 1, self.T-1))
+            Y = self.Y[:, 1:]
+            # 创建group的one-hot矩阵，形状: N*G
+            group_onehot = np.eye(self.G)[self.group]  # N*G
+            # network * Y
+            network_Y = self.network[:, :, :-1] * self.Y[:, :-1]  # N*N*(T-1)
+            # 对于每个 i, g, t: sum_j network[i,j,t] * Y[j,t] * group_mask[j,g]
+            X[:, :self.G, :] = np.einsum('ijt,jg->igt', network_Y, group_onehot)
+            # 自身滞后
+            X[:, self.G, :] = self.Y[:, :-1]
+            # CV部分
+            X[:, self.G+1:, :] = self.CV[:, :, :-1]
         else:
-            # 如果使用自回归
+            # 如果不使用自回归
+            '''
             for i in range(self.N):
                 # 取Network 第i列
                 X_i = np.zeros((self.G+self.p+1, self.T))
@@ -237,15 +331,28 @@ class GNAR_estimator:
                 X_i[self.G+1:self.G+self.p+1, :] = self.CV[i, :, :]
                 X[i, :, :] = X_i
                 Y[i, :] = Y_i
+            '''
+            # 创建group的one-hot矩阵，形状: N*G
+            group_onehot = np.eye(self.G)[self.group]  # N*G
+            # 初始化X和Y
+            X = np.zeros((self.N, self.G + self.p + 1, self.T))
+            Y = self.Y.copy()  # 直接拷贝
+            # network * X 按组加权求和，完全向量化
+            # 对于每个 i, g, t: sum_j network[i,j,t] * X[j,t] * (group[j]==g)
+            X[:, :self.G, :] = np.einsum('ijt,jg->igt', self.network * self.X[None, :, :], group_onehot)
+            # 自身值
+            X[:, self.G, :] = self.X
+            # CV部分
+            X[:, self.G+1:, :] = self.CV
         for g in range(self.G):
             if np.sum(self.group == g) == 0:
                 # 初始化系数的时候不会出现某个组为0的情况
-                beta_all[:, g] = self.beta[:, g]
+                beta_all[:, g] = self. beta[:, g]
                 continue
             Xg = np.concatenate(X[self.group == g],axis=1)  # N_obs*(G+p+1)*(T-1)
             yg = np.concatenate(Y[self.group == g])  # N_obs*(T-1)
             # 计算OLS系数
-            beta = np.linalg.inv(Xg @ Xg.T) @ Xg @ yg
+            beta = np.linalg.solve(Xg @ Xg.T, Xg @ yg)
             beta_all[:, g] = beta
             if final:
                 # 如果是最终结果，计算稳健标准误、t统计量和p值
@@ -273,6 +380,7 @@ class GNAR_estimator:
             beta = self.beta
         if group is None:
             group = self.group
+        '''
         #按照N个节点对应的组，构建N*N的系数矩阵，其中i，j节点的系数为beta[group[j], group[i]]
         self.coef = np.zeros((self.N, self.N))
         for i in range(self.N):
@@ -290,9 +398,19 @@ class GNAR_estimator:
         self.network_coef = np.zeros((self.N, self.N, self.T))
         for t in range(self.T):
             self.network_coef[:, :, t] = self.network[:, :, t] * self.coef
+        '''
+        # N*N 系数矩阵
+        self.coef = beta[np.ix_(group, group)].T   # (N,N)
+        # N 长度的动量系数
+        self.v_coef = beta[self.G, group]         # (N,)
+        # N*p 的CV系数
+        self.gamma_coef = beta[self.G+1:self.G+self.p+1, group].T  # (N,p)
+        # N*N*T 的网络系数矩阵
+        self.network_coef = self.network * self.coef[:, :, None]   # (N,N,T)
         #计算每一天的 Yt = v@Yt-1 + network_coef@Yt-1 + gamma@CV + eps，注意是矩阵乘法
         if self.X is None:
             # 如果使用自回归
+            '''
             Y_est = np.zeros((self.N, self.T-1))
             for t in range(1, self.T):
                 # 计算上一天的Yt-1
@@ -306,8 +424,20 @@ class GNAR_estimator:
                 # 计算当天的Yt
                 Y_est[:, t-1] = momentum + network_part + CV_part
             loss = np.sum((Y_est - self.Y[:, 1:]) ** 2) / (self.N * (self.T-1))
+            '''
+            # momentum 部分
+            momentum = self.v_coef[:, None] * self.Y[:, :-1]  # (N, T-1)
+            # network 部分
+            network_part = np.einsum('ijn,jn->in', self.network_coef[:, :, :-1], self.Y[:, :-1])  # (N, T-1)
+            # CV 部分
+            CV_part = np.sum(self.gamma_coef[:, :, None] * self.CV[:, :, :-1], axis=1)  # (N, T-1)
+            # 合并
+            Y_est = momentum + network_part + CV_part
+            # loss
+            loss = np.mean((Y_est - self.Y[:, 1:])**2)
         else:
             # 如果不使用自回归
+            '''
             Y_est = np.zeros((self.N, self.T))
             for t in range(self.T):
                 # 计算动量部分
@@ -319,8 +449,14 @@ class GNAR_estimator:
                 # 计算当天的Yt
                 Y_est[:, t] = momentum + network_part + CV_part
             loss = np.sum((Y_est - self.Y) ** 2) / (self.N * self.T)
-        return loss
-
+            '''
+            momentum = self.v_coef[:, None] * self.X  # (N, T)
+            network_part = np.einsum('ijn,jn->in', self.network_coef, self.X)  # (N, T)
+            CV_part = np.einsum('ip,ipt->it', self.gamma_coef, self.CV)  # (N, T)
+            Y_est = momentum + network_part + CV_part
+            loss = np.mean((Y_est - self.Y) ** 2)
+        return loss    
+    
     def update_para_group(self,leave=True):
         """ Update the group labels based on the loss function
         return:
@@ -331,6 +467,7 @@ class GNAR_estimator:
             raise ValueError("Group is not initialized, Run k_means_clustering() first")
         # update beta
         self.beta = self.cul_para_OLS()
+        Node_loss = []
         for i in tqdm(range(self.N), leave=leave):
             i_group_loss = []
             for g in range(self.G):
@@ -342,6 +479,18 @@ class GNAR_estimator:
             if self.group[i] != np.argmin(i_group_loss):
                 update_count += 1
                 self.group[i] = np.argmin(i_group_loss)
+                Node_loss.append(np.min(i_group_loss))
+        # 查看有几个组的节点数目是0 or 1
+        Node_loss = np.array(Node_loss)
+        for g in range(self.G):
+            if np.sum(self.group == g) <= 1:
+                # 选择loss最大的int(2n/G)个节点中随机一半加入该组
+                candidates = np.argsort(Node_loss)[-2*self.N//(self.G):]
+                np.random.shuffle(candidates)
+                self.group[candidates[:len(candidates)//2]] = g
+                update_count += len(candidates)//2
+                Node_loss[candidates] = 0 # 避免重复选择
+                print(f"Group {g} is empty, add {len(candidates)//2} nodes to it.")
         return update_count
 
     def update_all_para(self, max_iter=100, leave=True):
@@ -394,8 +543,6 @@ class GNAR_estimator:
                 print(f"{f'v_g{g}':<15}{self.beta[self.G, g]:<15.4f}{self.robust_se[self.G, g]:<15.4f}{self.t_stats[self.G, g]:<15.4f}{self.p_values[self.G, g]:<15.4f}")
                 for i in range(self.p):
                     print(f"{f'gamma_g{g}_{i}':<15}{self.beta[self.G + i, g]:<15.4f}{self.robust_se[self.G + i, g]:<15.4f}{self.t_stats[self.G + i, g]:<15.4f}{self.p_values[self.G + i, g]:<15.4f}")
-
-
 
     def fit(self, method='networkeffect', max_iter=100, time_varying=False, leave=True):
         """ Fit the GNAR model

@@ -1,4 +1,5 @@
 import numpy as np
+from tqdm import tqdm
 
 class GNAR_simulator:
     def __init__(self, N = 100, T = 300, G = 3, seed = 42, 
@@ -58,10 +59,13 @@ class GNAR_simulator:
             self.network[self.network > 0] = 1
         # 如果omit_eye为True，则将网络的前两个维度的对角线元素置为0
         if self.omit_eye:
-            for t in range(self.T):
-                np.fill_diagonal(self.network[:, :, t], 0)
+            #for t in range(self.T):
+            #    np.fill_diagonal(self.network[:, :, t], 0)
+            i = np.arange(self.N)
+            self.network[i, i, :] = 0
         # 网络的任何【i，：】和为1
         self.network = self.network / np.sum(self.network, axis=1, keepdims=True)
+        print('Network generated successfully.')
         if gamma is None:
             # 生成G*p个CV系数
             self.gamma = np.random.uniform(-1, 1, (self.G, self.p))
@@ -75,6 +79,7 @@ class GNAR_simulator:
         else:
             self.CV = np.random.rand(self.N, self.p)
             self.CV = np.repeat(self.CV[:, :, np.newaxis], self.T, axis=2)
+        print('CV generated successfully.')
         # 生成一个独立分布的噪声矩阵，正态分布，sigma为0.005
         self.eps = np.random.normal(0, self.sigma, (self.N, self.T))
         if (beta is None) and (v is None):
@@ -94,6 +99,7 @@ class GNAR_simulator:
             raise ValueError("Both beta and v must be None or both must be provided.")
         # 生成分组，将N个节点分成G组
         self.group = np.random.randint(0, self.G, self.N)
+        print('All Parameters generated successfully.')
         return self.beta, self.v, self.gamma, self.group
 
     def generate_data(self):
@@ -105,26 +111,31 @@ class GNAR_simulator:
         """
         #按照N个节点对应的组，构建N*N的系数矩阵，其中i，j节点的系数为beta[group[i], group[j]]
         self.coef = np.zeros((self.N, self.N))
-        for i in range(self.N):
-            for j in range(self.N):
-                self.coef[i, j] = self.beta[self.group[i], self.group[j]]
+        #for i in range(self.N):
+        #    for j in range(self.N):
+        #        self.coef[i, j] = self.beta[self.group[i], self.group[j]]
+        self.coef = self.beta[self.group[:, None], self.group[None, :]]
         # 按照N个节点对应的组，把G个动量系数v构建长度为N的动量系数
         self.v_coef = np.zeros(self.N)
-        for i in range(self.N):
-            self.v_coef[i] = self.v[self.group[i]]
+        #for i in range(self.N):
+        #    self.v_coef[i] = self.v[self.group[i]]
+        self.v_coef = self.v[self.group]
         # 按照N个节点对应的组，把G*p个CV系数gamma构建N*p的CV系数
         self.gamma_coef = np.zeros((self.N, self.p))
-        for i in range(self.N):
-            self.gamma_coef[i, :] = self.gamma[self.group[i], :]
+        #for i in range(self.N):
+        #    self.gamma_coef[i, :] = self.gamma[self.group[i], :]
+        self.gamma_coef = self.gamma[self.group, :]
+        print('Coefficient constructed successfully.')
         # 将N*N*T的network矩阵与系数矩阵相乘，得到N*N*T的网络系数矩阵
         self.network_coef = np.zeros((self.N, self.N, self.T))
-        for t in range(self.T):
-            self.network_coef[:, :, t] = self.network[:, :, t] * self.coef
+        #for t in range(self.T):
+        #    self.network_coef[:, :, t] = self.network[:, :, t] * self.coef
+        self.network_coef = self.network * self.coef[:, :, None]
         # 递推每一天的 Yt = v@Yt-1 + network_coef@Yt-1 + gamma@CV + eps，注意是矩阵乘法
         self.Y = np.zeros((self.N, self.T))
         if self.autoregression:
             self.Y[:, 0] = self.y0
-            for t in range(1, self.T):
+            for t in tqdm(range(1, self.T)):
                 # 计算上一天的Yt-1
                 Y_prev = self.Y[:, t-1]
                 # 计算动量部分
@@ -139,7 +150,8 @@ class GNAR_simulator:
                 self.Y[:, t] = momentum + network_part + CV_part + noise
             return self.Y, self.CV, self.network
         else:
-            for t in range(self.T):
+            '''
+            for t in tqdm(range(self.T)):
                 # 计算动量部分
                 momentum = self.v_coef * self.X[:, t]
                 # 计算网络部分
@@ -150,4 +162,15 @@ class GNAR_simulator:
                 noise = self.eps[:, t]
                 # 计算当天的Yt
                 self.Y[:, t] = momentum + network_part + CV_part + noise
+            '''
+            # momentum 部分: (N, T)
+            momentum = self.v_coef[:, None] * self.X
+            # network 部分: (N, T)，用爱因斯坦求和表达式
+            network_part = np.einsum('ijt,jt->it', self.network_coef, self.X)
+            # CV 部分: (N, T)
+            CV_part = np.einsum('ip,ipt->it', self.gamma_coef, self.CV)
+            # noise 部分: (N, T)
+            noise = self.eps
+            # Y: (N, T)
+            self.Y = momentum + network_part + CV_part + noise
             return self.Y, self.X, self.CV, self.network

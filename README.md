@@ -61,6 +61,11 @@ $$
 \end{equation}
 $$
 
+## Version
+- Version 1.0: Jul 24, 2025
+- Version 1.1: Aug 5, 2025 (Add GIC and normal reg)
+- Version 1.2: Sep 17, 2025 (Update algorithm and accelerate computation)
+
 ## References:
 
 - Zhu, X., Pan, R., Li, G., Liu, Y., & Wang, H. (2017). [Network Vector Autoregression](http://ibids.cn/pdf/aos2017.pdf). The Annals of Statistics, 45(3), 1096-1123.
